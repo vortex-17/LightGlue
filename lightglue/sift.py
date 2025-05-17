@@ -79,7 +79,7 @@ def run_opencv_sift(features: cv2.Feature2D, image: np.ndarray) -> np.ndarray:
 class SIFT(Extractor):
     default_conf = {
         "rootsift": True,
-        "nms_radius": 0,  # None to disable filtering entirely.
+        "nms_radius": None,  # None to disable filtering entirely.
         "max_num_keypoints": 4096,
         "backend": "opencv",  # in {opencv, pycolmap, pycolmap_cpu, pycolmap_cuda}
         "detection_threshold": 0.0066667,  # from COLMAP
@@ -131,6 +131,7 @@ class SIFT(Extractor):
                 edgeThreshold=self.conf.edge_threshold,
                 nOctaveLayers=self.conf.num_octaves,
             )
+            self.sift = cv2.SIFT_create()
         else:
             backends = {"opencv", "pycolmap", "pycolmap_cpu", "pycolmap_cuda"}
             raise ValueError(
