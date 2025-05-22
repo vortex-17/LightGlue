@@ -11,7 +11,7 @@ from skimage.registration import optical_flow_tvl1, optical_flow_ilk
 def compute_ssim():
     pass
 
-def clahe_lab(image):
+def clahe_lab(image, clipLimit=3.0, tileGridSize=(8, 8)):
     # Convert images to LAB color space
     image_lab = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
 
@@ -19,7 +19,7 @@ def clahe_lab(image):
     l_image, a_image, b_image = cv2.split(image_lab)
 
     # Perform CLAHE on L channel
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=tileGridSize)
     l_image_clahe = clahe.apply(l_image)
 
     # Merge channels back
@@ -31,9 +31,9 @@ def clahe_lab(image):
     return image_bgr
 
 def denoise_and_sharpen(img):
-    img = cv2.bilateralFilter(img, 7, 125, 125)
-    # img = cv2.edgePreservingFilter(img, flags=1, sigma_s=60, sigma_r=0.15)
-    # img   = cv2.GaussianBlur(img, (3,3), 1.0)
+    img = cv2.bilateralFilter(img, 5, 15, 15)
+    img = cv2.edgePreservingFilter(img, flags=1, sigma_s=60, sigma_r=0.15)
+    img   = cv2.GaussianBlur(img, (3,3), 1.0)
     # sharp  = cv2.addWeighted(smooth, 1.7, blur, -0.7, 0)
     return img
 
@@ -71,25 +71,30 @@ class LGExtractor:
         #                             detection_threshold=0.005).eval().to(self.device)
         
         self.extractor = SIFT().eval().to(self.device)
+        # self.extractor = DISK().eval().to(self.device)
         # self.extractor = SuperPoint().eval().to(self.device)
         self.matcher = LightGlue(features='sift', 
                                  max_kpts=4096, 
-                                 filter_threshold=0.045, 
+                                 filter_threshold=0.1, 
                                 #  depth_confidence=0.3, 
                                 #  width_confidence=0.3
                                  ).eval().to(self.device)
 
-    def preprocess_image(self, image, blur=True):
+    def preprocess_image(self, image, blur=True, clahe=True, clahe_arguments=None):
         h,w,_ = image.shape
         # if min(h,w) < 250:
         #     image = cv2.resize(image, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
         image = white_balance_lab(image)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        # image = clahe_lab(image)
+
         if blur:
             image = denoise_and_sharpen(image)
             # image = cv2.GaussianBlur(image, (5, 5), 0)
 
+        if clahe:
+            if clahe_arguments is not None:
+                image = clahe_lab(image, **clahe_arguments)
+            image = clahe_lab(image)
         # image = glint_removal(image)
 
         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
@@ -101,12 +106,26 @@ class LGExtractor:
     def compute_match(self, feats0, feats1):
         return self.matcher({'image0': feats0, 'image1': feats1})
     
-    def extract_and_match(self, image1, image2):
-        image1 = self.preprocess_image(image1, blur=True)
-        image2 = self.preprocess_image(image2)
+    def extract_and_match(self, image1, image2, component_type=None):
+        master_component_clahe_args = {
+            "clipLimit": 3.0,
+            "tileGridSize": (8, 8)
+        }
 
-        # h,w,c = image1.shape
-        # image1 = cv2.resize(image1, (w*2, h*2), interpolation=cv2.INTER_CUBIC)
+        sample_blister_clahe_args = {
+            "clipLimit": 3.0,
+            "tileGridSize": (8, 8)
+        }
+
+        if component_type in ["logo", "warning_label"]:
+            image1 = self.preprocess_image(image1, blur=True, clahe=True, clahe_arguments=master_component_clahe_args)
+            image2 = self.preprocess_image(image2, blur=True, clahe=False)
+        else:
+            image1 = self.preprocess_image(image1, blur=True, clahe=True, clahe_arguments=master_component_clahe_args)
+            image2 = self.preprocess_image(image2, blur=True, clahe=True, clahe_arguments=sample_blister_clahe_args)
+
+        h,w = image1.shape[:2]
+        image1 = cv2.resize(image1, (w*2, h*2), interpolation=cv2.INTER_CUBIC)
 
         # image1,image2 = clahe_lab(image1, image2)
         # image1 = clahe_lab(image1)
@@ -166,11 +185,11 @@ class LGExtractor:
         """
 
 
-        if component_type in ["logo", "warning_label", "composition", "salt_name", "mfg_details", "brand_logo", "label"]:
-            print("Rotating Image")
-            image1 = cv2.rotate(image1, cv2.ROTATE_90_CLOCKWISE)
+        # if component_type in ["logo", "warning_label", "composition", "salt_name", "mfg_details", "brand_logo", "label"]:
+        #     print("Rotating Image")
+        #     image1 = cv2.rotate(image1, cv2.ROTATE_90_CLOCKWISE)
 
-        match_result = self.extract_and_match(image1, image2)
+        match_result = self.extract_and_match(image1, image2, component_type=component_type)
 
         print(match_result)
 
@@ -192,6 +211,8 @@ class LGExtractor:
         bbox =  np.array([[0,0],[image1.shape[1],0],[image1.shape[1],image1.shape[0]],[0,image1.shape[0]]], dtype=np.float32)
 
         cropped_image = self.crop_image(image2, bbox, H)
+
+        print(cropped_image.shape)
 
         return cropped_image
 
