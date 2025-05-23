@@ -169,3 +169,6 @@ images/
 *.json
 *.jpeg
 *.jpg
+*.zip
+glue_method_ds.py
+/tests
