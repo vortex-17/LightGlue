@@ -83,6 +83,7 @@ class SIFT(Extractor):
         "max_num_keypoints": 4096,
         "backend": "opencv",  # in {opencv, pycolmap, pycolmap_cpu, pycolmap_cuda}
         "detection_threshold": 0.0066667,  # from COLMAP
+        # "detection_threshold" : 0.1,
         "edge_threshold": 10,
         "first_octave": -1,  # only used by pycolmap, the default of COLMAP
         "num_octaves": 4,
@@ -131,7 +132,7 @@ class SIFT(Extractor):
                 edgeThreshold=self.conf.edge_threshold,
                 nOctaveLayers=self.conf.num_octaves,
             )
-            self.sift = cv2.SIFT_create()
+            # self.sift = cv2.SIFT_create()
         else:
             backends = {"opencv", "pycolmap", "pycolmap_cpu", "pycolmap_cuda"}
             raise ValueError(

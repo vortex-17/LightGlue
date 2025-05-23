@@ -212,14 +212,14 @@ def main(log_results=True):
     
 
 if __name__ == "__main__":
-    # main(log_results=True)
-    unique_id = "849b3ed2-e95d-44b7-967f-1aa3a87b4e2e"
-    master_id = "6825de5209398f7f7c1ffade"
-    components = ["warning_label"]
+    main(log_results=True)
+    # unique_id = "79350e24-8dc8-4d61-ab4c-fc40b1e9447b"
+    # master_id = "67ecd4427ae3dc209c80bc0f"
+    # # components = ["warning_label"]
     # components = ["logo", "printed_details", "brand_logo", "warning_label", "composition", "salt_name", "mfg_details", "label"]
-    for component_type in components:
-        print(f"Component: {component_type}")
-        try:
-            medtrust_single_component_check(unique_id=unique_id, master_id=master_id, component_type=component_type)
-        except Exception as e:
-            print(f"Error while identifying component: {str(e)}")
+    # for component_type in components:
+    #     print(f"Component: {component_type}")
+    #     try:
+    #         medtrust_single_component_check(unique_id=unique_id, master_id=master_id, component_type=component_type)
+    #     except Exception as e:
+    #         print(f"Error while identifying component: {str(e)}")

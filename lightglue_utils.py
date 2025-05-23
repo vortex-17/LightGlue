@@ -11,6 +11,43 @@ from skimage.registration import optical_flow_tvl1, optical_flow_ilk
 def compute_ssim():
     pass
 
+def adjust_gamma(image, gamma=1.0):
+	# build a lookup table mapping the pixel values [0, 255] to
+	# their adjusted gamma values
+	invGamma = 1.0 / gamma
+	table = np.array([((i / 255.0) ** invGamma) * 255
+		for i in np.arange(0, 256)]).astype("uint8")
+	# apply gamma correction using the lookup table
+	return cv2.LUT(image, table)
+
+def pad_image(
+    img: np.ndarray,
+    pad: int | tuple[int, int, int, int] = 10,
+    color: tuple[int, int, int] | int = (255, 255, 255),
+) -> np.ndarray:
+    # Resolve pad sizes
+    if isinstance(pad, int):
+        top = bottom = left = right = pad
+    elif len(pad) == 4:
+        top, bottom, left, right = pad
+    else:
+        raise ValueError("pad must be an int or a 4‑tuple (top, bottom, left, right)")
+
+    # Convert colour for gray images
+    if img.ndim == 2:                       # grayscale
+        if isinstance(color, tuple):
+            color = int(np.mean(color))
+    else:                                   # colour image
+        if not isinstance(color, tuple):
+            color = (color, color, color)
+
+    return cv2.copyMakeBorder(
+        img,
+        top, bottom, left, right,
+        borderType=cv2.BORDER_CONSTANT,
+        value=color,
+    )
+
 def clahe_lab(image, clipLimit=3.0, tileGridSize=(8, 8)):
     # Convert images to LAB color space
     image_lab = cv2.cvtColor(image, cv2.COLOR_RGB2Lab)
@@ -31,9 +68,9 @@ def clahe_lab(image, clipLimit=3.0, tileGridSize=(8, 8)):
     return image_bgr
 
 def denoise_and_sharpen(img):
-    img = cv2.bilateralFilter(img, 5, 15, 15)
+    # img = cv2.bilateralFilter(img, 5, 75, 75)
     img = cv2.edgePreservingFilter(img, flags=1, sigma_s=60, sigma_r=0.15)
-    img   = cv2.GaussianBlur(img, (3,3), 1.0)
+    # img   = cv2.GaussianBlur(img, (5,5), 2.0)
     # sharp  = cv2.addWeighted(smooth, 1.7, blur, -0.7, 0)
     return img
 
@@ -62,6 +99,13 @@ def glint_removal(img):
 
     return img
 
+def zoom_image(zoom_factor, img_temp):
+    # img_temp = image.copy()
+    for i in range(2):
+        img_temp = np.repeat(img_temp, zoom_factor, axis=i)
+
+    return img_temp
+
 class LGExtractor:
 
     def __init__(self, device="cpu"):
@@ -74,8 +118,8 @@ class LGExtractor:
         # self.extractor = DISK().eval().to(self.device)
         # self.extractor = SuperPoint().eval().to(self.device)
         self.matcher = LightGlue(features='sift', 
-                                 max_kpts=4096, 
-                                 filter_threshold=0.1, 
+                                 max_kpts=4086, 
+                                 filter_threshold=0.2, 
                                 #  depth_confidence=0.3, 
                                 #  width_confidence=0.3
                                  ).eval().to(self.device)
@@ -87,14 +131,17 @@ class LGExtractor:
         image = white_balance_lab(image)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
+        # image = adjust_gamma(image, gamma=1.5)
+
         if blur:
             image = denoise_and_sharpen(image)
             # image = cv2.GaussianBlur(image, (5, 5), 0)
 
-        if clahe:
-            if clahe_arguments is not None:
-                image = clahe_lab(image, **clahe_arguments)
-            image = clahe_lab(image)
+        # if clahe:
+        #     if clahe_arguments is not None:
+        #         image = clahe_lab(image, **clahe_arguments)
+        #     else:
+        #         image = clahe_lab(image)
         # image = glint_removal(image)
 
         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
@@ -117,19 +164,27 @@ class LGExtractor:
             "tileGridSize": (8, 8)
         }
 
+        # image1 = pad_image(image1, pad=10, color=(255, 255, 255))
+
         if component_type in ["logo", "warning_label"]:
             image1 = self.preprocess_image(image1, blur=True, clahe=True, clahe_arguments=master_component_clahe_args)
-            image2 = self.preprocess_image(image2, blur=True, clahe=False)
+            image2 = self.preprocess_image(image2, blur=True, clahe=True)
         else:
             image1 = self.preprocess_image(image1, blur=True, clahe=True, clahe_arguments=master_component_clahe_args)
             image2 = self.preprocess_image(image2, blur=True, clahe=True, clahe_arguments=sample_blister_clahe_args)
 
-        h,w = image1.shape[:2]
-        image1 = cv2.resize(image1, (w*2, h*2), interpolation=cv2.INTER_CUBIC)
+        # h,w = image1.shape[:2]
+        # image1 = cv2.resize(image1, (w*2, h*2), interpolation=cv2.INTER_CUBIC)
 
         # image1,image2 = clahe_lab(image1, image2)
         # image1 = clahe_lab(image1)
         # image2 = clahe_lab(image2)
+            
+        # image1 = pad_image(image1, pad=30, color=(255, 255, 255))
+
+        # zoom_image_factor = 4
+        # image1 = zoom_image(zoom_image_factor, image1.copy())
+        # image2 = zoom_image(zoom_image_factor, image2.copy())
 
         cv2.imwrite("image1.jpg", image1)
         cv2.imwrite("image2.jpg", image2)
@@ -188,10 +243,11 @@ class LGExtractor:
         # if component_type in ["logo", "warning_label", "composition", "salt_name", "mfg_details", "brand_logo", "label"]:
         #     print("Rotating Image")
         #     image1 = cv2.rotate(image1, cv2.ROTATE_90_CLOCKWISE)
+        #     image2 = cv2.rotate(image2, cv2.ROTATE_90_CLOCKWISE)
 
         match_result = self.extract_and_match(image1, image2, component_type=component_type)
 
-        print(match_result)
+        # print(match_result)
 
         print(f"Number of Matches: {len(match_result['matches'])}")
 
@@ -201,7 +257,7 @@ class LGExtractor:
             match_result["points0"].numpy().reshape(-1, 1, 2), 
             match_result["points1"].numpy().reshape(-1, 1, 2), 
             method=cv2.USAC_MAGSAC,
-            ransacReprojThreshold=5.0
+            ransacReprojThreshold=3.0
         )
 
         # H, m2 = cv2.estimateAffinePartial2D(match_result["points0"].numpy().reshape(-1, 1, 2), match_result["points1"].numpy().reshape(-1, 1, 2), method=cv2.RANSAC)
