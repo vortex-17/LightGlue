@@ -128,8 +128,9 @@ class LGExtractor:
 
         print(cropped_image.shape)
 
-        cropped_image = tight_crop_border(cropped_image, bg_threshold=180)
-        cropped_image = contour_trim(cropped_image)
+        if component_type in ["warning_label", "logo"]:
+            cropped_image = tight_crop_border(cropped_image, bg_threshold=180)
+            cropped_image = contour_trim(cropped_image)
 
         return cropped_image
 
