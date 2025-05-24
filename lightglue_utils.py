@@ -2,13 +2,26 @@ import cv2
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import time
+import os
 
 from lightglue import viz2d
 from lightglue import LightGlue, SuperPoint, DISK, SIFT
 from lightglue.utils import numpy_image_to_torch, rbd
 from skimage.registration import optical_flow_tvl1, optical_flow_ilk
+from dotenv import load_dotenv
 
-from img_preprocessing_utils import denoise_and_sharpen, white_balance_lab, refine_homography_ecc, tight_crop_border,contour_trim
+from img_preprocessing_utils import denoise_and_sharpen, white_balance_lab, refine_homography_ecc, tight_crop_border,contour_trim, get_correct_orientation_and_skew
+
+load_dotenv()
+
+IMAGE_FOLDER = os.path.join(os.getcwd(),"images")
+MASTER_IMAGES = f"{IMAGE_FOLDER}/master/"
+COMPONENTS_IMAGES = f"{IMAGE_FOLDER}/components/"
+SUBFOLDER = "medtrust"
+MONGO_URI = os.getenv("MONGO_URL")
+PRESIGNED_S3_URL=os.getenv("S3_URL")
+
 class LGExtractor:
 
     def __init__(self, device="cpu"):
@@ -19,11 +32,13 @@ class LGExtractor:
         
         self.extractor = SIFT().eval().to(self.device)
         self.matcher = LightGlue(features='sift', 
-                                 max_kpts=4086, 
+                                 max_kpts=1000, 
                                  filter_threshold=0.2, 
                                 #  depth_confidence=0.3, 
                                 #  width_confidence=0.3
                                  ).eval().to(self.device)
+        
+        self.matcher.compile(mode='reduce-overhead')
 
     def preprocess_image(self, image, blur=True):
         image = white_balance_lab(image)
@@ -35,9 +50,13 @@ class LGExtractor:
         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         return image
 
+    @torch.no_grad()
     def extract_keypoints(self, image):
-        return self.extractor.extract(image.to(self.device))
+        features = self.extractor.extract(image.to(self.device))
+        print(features.keys())
+        return features
 
+    @torch.no_grad()
     def compute_match(self, feats0, feats1):
         return self.matcher({'image0': feats0, 'image1': feats1})
     
@@ -52,11 +71,14 @@ class LGExtractor:
         image1 = numpy_image_to_torch(image1)
         image2 = numpy_image_to_torch(image2)
 
-
+        t1 = time.time()
         feats0 = self.extract_keypoints(image1)
         feats1 = self.extract_keypoints(image2)
+        print(f"Keypoint Extraction Time: {time.time() - t1:.2f} seconds")
 
+        t1 = time.time()
         matches = self.compute_match(feats0, feats1)
+        print(f"Matching Time: {time.time() - t1:.2f} seconds")
 
         feats0, feats1, matches = [rbd(x) for x in [feats0, feats1, matches]]
 
@@ -127,6 +149,14 @@ class LGExtractor:
         cropped_image = self.crop_image(image2, bbox, H)
 
         print(cropped_image.shape)
+        
+        rotate = True
+        if component_type == "printed_details":
+            rotate = False
+        
+        cropped_image = get_correct_orientation_and_skew(
+                cropped_image, rotate
+            )
 
         if component_type in ["warning_label", "logo"]:
             cropped_image = tight_crop_border(cropped_image, bg_threshold=180)
