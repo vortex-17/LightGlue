@@ -12,7 +12,7 @@ from skimage.registration import optical_flow_tvl1, optical_flow_ilk
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
 
-from img_preprocessing_utils import denoise_and_sharpen, white_balance_lab, refine_homography_ecc, tight_crop_border,contour_trim, get_correct_orientation_and_skew
+from services.img_preprocessing_utils import denoise_and_sharpen, white_balance_lab, refine_homography_ecc, tight_crop_border,contour_trim, get_correct_orientation_and_skew
 
 load_dotenv()
 
@@ -121,6 +121,8 @@ class LGExtractor:
             Image2 = Sample Blister 
         """
 
+        print(image1.shape)
+        print(image2.shape)
 
         # if component_type in ["logo", "warning_label", "composition", "salt_name", "mfg_details", "brand_logo", "label"]:
         #     print("Rotating Image")

@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 import os
 import cv2
 from lightglue_utils import LGExtractor
+from concurrent.futures import ThreadPoolExecutor
 
 LG_EXTRACTOR = LGExtractor(device="cpu")
 
@@ -169,16 +170,16 @@ def medtrust_single_component_check(unique_id, master_id, component_type):
 
     sample_component = LG_EXTRACTOR.identify_component(master_component, sample_blister, component_type=component_type)
 
-    cv2.imshow(component_type, sample_component)
-    cv2.waitKey(0)
+    # cv2.imshow(component_type, sample_component)
+    # cv2.waitKey(0)
 
 
 
 def main(log_results=True):
     t0 = time.time()
     unique_ids = []
-    # file_path = "/Users/vivek/allscan/counterfeit_demo/demo_11042025_fake.csv"
-    file_path = "/Users/vivek/allscan/counterfeit_demo/zydus_demo_16052025/fake_and_real.csv"
+    file_path = "/Users/vivek/allscan/counterfeit_demo/demo_11042025_real.csv"
+    # file_path = "/Users/vivek/allscan/counterfeit_demo/zydus_demo_16052025/fake_and_real.csv"
     unique_ids += get_list_of_ids(file_path)
 
     err_dict = {}
@@ -209,17 +210,22 @@ def main(log_results=True):
         with open("final_result.json", "a") as fp:
             fp.write(json.dumps(completed_dict, indent=4))
 
-    
+
 
 if __name__ == "__main__":
-    main(log_results=True)
-    # unique_id = "79350e24-8dc8-4d61-ab4c-fc40b1e9447b"
-    # master_id = "67ecd4427ae3dc209c80bc0f"
-    # # components = ["warning_label"]
-    # components = ["logo", "printed_details", "brand_logo", "warning_label", "composition", "salt_name", "mfg_details", "label"]
-    # for component_type in components:
-    #     print(f"Component: {component_type}")
-    #     try:
-    #         medtrust_single_component_check(unique_id=unique_id, master_id=master_id, component_type=component_type)
-    #     except Exception as e:
-    #         print(f"Error while identifying component: {str(e)}")
+    for i in range(1):
+        t0 = time.time()
+        def process_component(component_type):
+            try:
+                medtrust_single_component_check(unique_id=unique_id, master_id=master_id, component_type=component_type)
+            except Exception as e:
+                print(f"Error while identifying component: {str(e)}")
+
+        unique_id = "fce1ef1e-b308-416f-9f2a-a1cdc1784693"
+        master_id = "67ecd2ae7ae3dc209c80bc0e"
+        components = ["logo", "printed_details", "brand_logo", "warning_label", "composition", "salt_name", "mfg_details", "label"]
+
+        with ThreadPoolExecutor() as executor:
+            executor.map(process_component, components)
+
+        print(f"Total Time taken for all components: {time.time() - t0:.2f} seconds")
