@@ -10,6 +10,8 @@ from http import HTTPStatus
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import cv2
+import threading
+import time
 
 app = FastAPI()
 origins = ["*"]
@@ -23,7 +25,7 @@ app.add_middleware(
 )
 
 # Define Constants
-LG_EXTRACTOR = LGExtractor(device="mps:0")
+LG_EXTRACTOR = LGExtractor(device="cpu")
 
 @app.get("/healthcheck")
 async def healthcheck():
@@ -60,28 +62,35 @@ async def identify_components(master_id: str, sample_image: UploadFile = File(..
         # Orient and Crop the image
         sample_image = cropped_image(sample_image)
 
-
     except Exception as e:
         print(f"Error while reading sample image: {str(e)}")
 
-    
+    def identify_component_thread(master_cmp, sample_image, master_component):
+        sample_component = LG_EXTRACTOR.identify_component(master_cmp, sample_image, master_component)
+        if sample_component is not None:
+            # Compute MS-SSIM ?
+            pass
+
     # Get all master components
     # Struct of Master Components -> {"logo" : cv2.imread(), "printed_details" : cv2.imread()}
+    t1 = time.time()
     master_components = get_master_components(master_id)
     if not master_components:
         return JSONResponse(content={"status": "error", "message": "Master ID not found"}, status_code=404, media_type="application/json")
     
+    print(f"Time taken to get master components: {time.time() - t1}")
+    
     master_components_list = ["printed_details", "logo", "mfg_details", "warning_label", "salt_name", "composition", "label"]
+    threads = []
     for master_component in master_components_list:
         print(f"Identifying component: {master_component}")
         master_cmp = master_components[master_component]
-        sample_component = LG_EXTRACTOR.identify_component(master_cmp, sample_image, master_component)
+        thread = threading.Thread(target=identify_component_thread, args=(master_cmp, sample_image, master_component))
+        threads.append(thread)
+        thread.start()
 
-        if sample_component is not None:
-
-            # Compute MS-SSIM ?
-            pass
-
+    for thread in threads:
+        thread.join()
 
     return JSONResponse(content={"status": "OK"}, status_code=200, media_type="application/json")
     
