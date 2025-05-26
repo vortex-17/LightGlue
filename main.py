@@ -95,11 +95,29 @@ async def identify_components(master_id: str, sample_image: UploadFile = File(..
     return JSONResponse(content={"status": "OK"}, status_code=200, media_type="application/json")
     
 
+# Single Forward Pass for all components
+@app.post("/identify_components/v3/{master_id}")
+async def identify_components_v3(master_id: str, sample_image: UploadFile = File(...)):
+    try:
+        image1_bytes = await sample_image.read()
+        nparr = np.frombuffer(image1_bytes, np.uint8)
+        sample_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
+        # Orient and Crop the image
+        sample_image = cropped_image(sample_image)
+
+    except Exception as e:
+        print(f"Error while reading sample image: {str(e)}")
+
+    # Get Components
+    LG_EXTRACTOR.identify_all_components_single_pass(sample_image, master_id)
+    
+    return JSONResponse(content={"status": "OK"}, status_code=200, media_type="application/json")
     
 
 
 @app.post("/identify_from_unique_id")
+
 async def identify_from_unique_id(unqiue_id: str):
     pass
 

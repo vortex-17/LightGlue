@@ -194,7 +194,7 @@ class LGExtractor:
                 }
                 pair_list.append({"image0" : master_component_features, "image1" : sample_image_feature})
 
-        print(component_dict)
+        # print(component_dict)
             
         t1 = time.time()
         matches_all = self.batch_matcher(pair_list)
@@ -225,7 +225,8 @@ class LGExtractor:
                 image1 = component_dict[component_list[i]]["image"]
 
                 bbox =  np.array([[0,0],[image1.shape[1],0],[image1.shape[1],image1.shape[0]],[0,image1.shape[0]]], dtype=np.float32)
-
+                
+                rotate = True
                 cropped_image = self.crop_image(sample_image, bbox, H)
                 if component == "printed_details":
                     rotate = False
