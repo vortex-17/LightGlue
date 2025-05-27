@@ -11,9 +11,10 @@ from lightglue import LightGlue, SuperPoint, DISK, SIFT
 from lightglue.utils import numpy_image_to_torch, rbd
 from skimage.registration import optical_flow_tvl1, optical_flow_ilk
 from dotenv import load_dotenv
-from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
 
 from services.img_preprocessing_utils import denoise_and_sharpen, white_balance_lab, refine_homography_ecc, tight_crop_border,contour_trim, get_correct_orientation_and_skew
+from concurrent.futures import ThreadPoolExecutor
 
 load_dotenv()
 
@@ -23,6 +24,9 @@ COMPONENTS_IMAGES = f"{IMAGE_FOLDER}/components/"
 SUBFOLDER = "medtrust"
 MONGO_URI = os.getenv("MONGO_URL")
 PRESIGNED_S3_URL=os.getenv("S3_URL")
+
+torch.set_num_threads(5)          # 2 per LG call (adjust to cores)
+# torch.set_num_interop_threads(1)
 
 class BatchedLG(nn.Module):
     def __init__(self, lg):
@@ -50,7 +54,7 @@ class LGExtractor:
                                 #  width_confidence=0.3
                                  ).eval().to(self.device).to(torch.float32)
         
-        # self.matcher.compile(mode='reduce-overhead')
+        self.matcher.compile(mode='reduce-overhead')
 
         self.batch_matcher = BatchedLG(self.matcher)
 
@@ -177,7 +181,7 @@ class LGExtractor:
     def identify_all_components_single_pass(self, sample_image, master_id):
 
         # fetch all master_id
-        component_list = ["logo", "mfg_details", "warning_label", "printed_details", "label","salt_name","composition"]
+        component_list = ["logo", "mfg_details", "warning_label", "printed_details", "label","salt_name"]
         component_dict = {}
         
         sample_image_feature = self.extract_keypoints(sample_image)
@@ -247,16 +251,152 @@ class LGExtractor:
 
 
         print(f"Time taken for matching: {time.time() - t1}")
+    
+
+    def identify_all_components_parallel(self, sample_image, master_id):
+        component_list = ["logo", "mfg_details", "warning_label", "printed_details", "label", "salt_name", "composition"]
+        component_dict = {}
+        
+        sample_image_feature = self.extract_keypoints(sample_image)
+        total_matching_time = 0
+
+        def process_component(component):
+            t1 = time.time()
+            print(component)
+            component_path = f"{MASTER_IMAGES}/{master_id}/{component}.jpeg"
+            if os.path.exists(component_path):
+                master_component = cv2.imread(component_path)
+                master_component_features = self.extract_keypoints(master_component)
+                component_dict[component] = {
+                    "image": master_component,
+                    "features": master_component_features
+                }
+                match_result = self.matcher({'image0': master_component_features, 'image1': sample_image_feature})
+                print(f"Matching Time for {component}: {time.time() - t1:.2f} seconds")
+                try:
+                    feats0, feats1, match_result = [rbd(x) for x in [master_component_features, sample_image_feature, match_result]]
+                    kpts0 = feats0["keypoints"].to("cpu")
+                    kpts1 = feats1["keypoints"].to("cpu")
+                    matches = match_result['matches']
+                    points0 = kpts0[matches[..., 0]].to("cpu")
+                    points1 = kpts1[matches[..., 1]].to("cpu")
+                    H, inliers = self.find_homography(
+                        points0.numpy().reshape(-1, 1, 2),
+                        points1.numpy().reshape(-1, 1, 2),
+                        method=cv2.USAC_MAGSAC,
+                        ransacReprojThreshold=3.0
+                    )
+
+                    inlier_count = np.sum(inliers) if inliers is not None else 0
+                    print(f"Homography inliers: {inlier_count}")
+
+                    image1 = master_component
+
+                    bbox = np.array([[0, 0], [image1.shape[1], 0], [image1.shape[1], image1.shape[0]], [0, image1.shape[0]]], dtype=np.float32)
+
+                    rotate = True
+                    cropped_image = self.crop_image(sample_image, bbox, H)
+                    if component == "printed_details":
+                        rotate = False
+
+                    cropped_image = get_correct_orientation_and_skew(
+                        cropped_image, rotate
+                    )
+
+                    if component in ["warning_label", "logo"]:
+                        cropped_image = tight_crop_border(cropped_image, bg_threshold=180)
+                        cropped_image = contour_trim(cropped_image)
+
+                    cv2.imwrite(f"{component}.jpeg", cropped_image)
+                except Exception as e:
+                    print(f"Error in component {component}: {str(e)}")
+
+        with ThreadPoolExecutor(max_workers=min(len(component_list), multiprocessing.cpu_count())) as executor:
+            executor.map(process_component, component_list)
+
+        print(f"Total matching time: {total_matching_time} seconds")
         
 
+    def identify_all_components_serial(self, sample_image, master_id):
 
+        # fetch all master_id
+        component_list = ["logo", "mfg_details", "warning_label", "printed_details", "label","salt_name"]
+        component_dict = {}
+        
+        sample_image_feature = self.extract_keypoints(sample_image)
+        pair_list = []
+        total_matching_time = 0
+        for component in component_list:
+            print(component)
+            component_path = f"{MASTER_IMAGES}/{master_id}/{component}.jpeg"
+            if os.path.exists(component_path):
+                master_component = cv2.imread(component_path)
+                # self.identify_component(master_component, sample_image, component_type=component)
+                master_component_features = self.extract_keypoints(master_component)
+                component_dict[component] = {
+                    "image" : master_component,
+                    "features" : master_component_features
+                }
+                # pair_list.append({"image0" : master_component_features, "image1" : sample_image_feature})
+                t1 = time.time()
+                match_result = self.matcher({'image0': master_component_features, 'image1': sample_image_feature})
+                print(f"Matching Time for {component}: {time.time() - t1:.2f} seconds")
+                total_matching_time += (time.time() - t1)
+                try:
+                    # match_result = matches_all[i]
+                    feats0, feats1, match_result = [rbd(x) for x in [master_component_features, sample_image_feature, match_result]]
+                    print(match_result.keys())
+                    kpts0 = feats0["keypoints"].to("cpu")
+                    kpts1 = feats1["keypoints"].to("cpu")
+                    matches = match_result['matches']  # indices with shape (K,2)
+                    points0 = kpts0[matches[..., 0]].to("cpu")  # coordinates in img0, shape (K,2)
+                    points1 = kpts1[matches[..., 1]].to("cpu") # coordinates in img1, shape (K,2)
+                    H, inliers = self.find_homography(
+                        points0.numpy().reshape(-1, 1, 2), 
+                        points1.numpy().reshape(-1, 1, 2), 
+                        method=cv2.USAC_MAGSAC,
+                        ransacReprojThreshold=3.0
+                    )
+
+                    # H, m2 = cv2.estimateAffinePartial2D(match_result["points0"].numpy().reshape(-1, 1, 2), match_result["points1"].numpy().reshape(-1, 1, 2), method=cv2.RANSAC)
+                    inlier_count = np.sum(inliers) if inliers is not None else 0
+                    print(f"Homography inliers: {inlier_count}")
+
+                    image1 = master_component
+
+                    bbox =  np.array([[0,0],[image1.shape[1],0],[image1.shape[1],image1.shape[0]],[0,image1.shape[0]]], dtype=np.float32)
+                    
+                    rotate = True
+                    cropped_image = self.crop_image(sample_image, bbox, H)
+                    if component == "printed_details":
+                        rotate = False
+                    
+                    cropped_image = get_correct_orientation_and_skew(
+                            cropped_image, rotate
+                        )
+
+                    if component in ["warning_label", "logo"]:
+                        cropped_image = tight_crop_border(cropped_image, bg_threshold=180)
+                        cropped_image = contour_trim(cropped_image)
+                    
+                    cv2.imwrite(f"{component}.jpeg", cropped_image)
+                except Exception as e:
+                    print(f"Error in component {component}: {str(e)}")
+                    cropped_image = None
+
+
+        # print(component_dict)
+                    
+        print(f"Total matching time: {total_matching_time} seconds")
 
 # t0 = time.time()
 # sample_image = cv2.imread(f"{IMAGE_FOLDER}/sample_blisters/d335909f-cb77-44db-a6bd-d678ea484528.jpeg")
 # master_id = "67ecd2ae7ae3dc209c80bc0e"
 
 # lg = LGExtractor(device="cpu")
-# for i in range(1):
-#     lg.identify_all_components_single_pass(sample_image, master_id)
+# for i in range(5):
+#     t1 = time.time()
+#     lg.identify_all_components_parallel(sample_image, master_id)
+#     print(f"Time taken for CI: {time.time() - t1}")
 
 # print(f"Total Time taken: {time.time() - t0}")
